@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TORCH_INDEX: https://download.pytorch.org/whl/cpu
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (CPU-only torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url "$TORCH_INDEX"
+          pip install -e ".[dev]" ruff
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Unit + pipeline tests on the synthetic fixture (offline; Spark tests skip)
+        run: pytest -q -m "not spark" --cov=recsys_lab --cov-report=term
+
+  spark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with PySpark (CPU-only torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url "$TORCH_INDEX"
+          pip install -e ".[dev,spark]"
+      - name: Spark/pandas feature parity + pipeline on the Spark engine
+        run: pytest -q -m spark
+      - name: Run the PySpark feature job (local mode) on the fixture
+        run: |
+          python -m recsys_lab.spark_job --train tests/fixtures/mini/ratings.csv \
+            --movies tests/fixtures/mini/movies.csv --out /tmp/features
+          head -3 /tmp/features/user_features/part-*.csv /tmp/features/item_features/part-*.csv
+
+  movielens-e2e:
+    # Downloads the real MovieLens ml-latest-small zip (about 1 MB, SHA-256 pinned)
+    # and runs the full pipeline with the PySpark feature job.
+    runs-on: ubuntu-latest
+    needs: [test, spark]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (CPU-only torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url "$TORCH_INDEX"
+          pip install -e ".[spark]"
+      - name: Download MovieLens (checksum verified)
+        run: recsys-lab download
+      - name: Full pipeline (PySpark features)
+        run: recsys-lab run --engine spark --reports ci-reports
+      - name: Report vs the committed numbers
+        run: |
+          cat ci-reports/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          echo '### Diff vs committed reports/REPORT.md (informational; float results can differ across CPUs)' >> "$GITHUB_STEP_SUMMARY"
+          { echo '```diff'; diff reports/REPORT.md ci-reports/REPORT.md || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: movielens-reports
+          path: ci-reports/

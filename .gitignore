@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+coverage.xml
+build/
+dist/
+# downloaded dataset and generated artifacts
+data/
+artifacts/
+*.pt
+*.ckpt
+spark-warehouse/
+metastore_db/
+derby.log
