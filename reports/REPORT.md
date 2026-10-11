@@ -12,6 +12,18 @@ Relevant = test-period ratings >= 4 on items that are (SIMULATED) available. k =
 | two_tower+ranker+mmr | 0.1057 | 0.0873 | 0.0436 | 0.0518 | 0.7844 | 0.0585 |
 | two_tower+ranker+genre_cap | 0.0946 | 0.0815 | 0.0419 | 0.0456 | 0.8400 | 0.0597 |
 
+## Beyond accuracy: novelty and popularity bias
+
+Long tail = items outside the 82 most popular items that hold 20% of positive history interactions.
+
+| policy | novelty@10 (bits) | ARP@10 | APLT@10 | Gini@10 | coverage@10 |
+|---|---|---|---|---|---|
+| popularity | 1.92 | 166.2 | 0.0080 | 0.9975 | 0.0104 |
+| two_tower | 3.56 | 73.4 | 0.5838 | 0.9654 | 0.0852 |
+| two_tower+ranker | 3.11 | 93.8 | 0.4393 | 0.9812 | 0.0590 |
+| two_tower+ranker+mmr | 3.09 | 94.0 | 0.4374 | 0.9814 | 0.0585 |
+| two_tower+ranker+genre_cap | 3.06 | 96.0 | 0.4289 | 0.9816 | 0.0597 |
+
 Two-tower candidate recall (all relevant, before availability): recall@50 = 0.2592, recall@100 = 0.3652.
 Without the availability filter, 12.3% of the ranker's top-10 would be unavailable (SIMULATED, 84.5% of items available).
 
@@ -29,4 +41,4 @@ Control `two_tower` n=10003, treatment `two_tower+ranker` n=9997; SRM p = 0.966.
 - A/A calibration: 200 A/A tests of 2000 users, false-positive rate 0.055 at alpha 0.05.
 - Team-draft interleaving (5000 users): treatment wins 392, control wins 376, ties 4232; sign test p = 0.588.
 
-Run: python 3.12.14, torch 2.14.1+cpu, 49.9 s on CPU.
+Run: python 3.12.14, torch 2.14.1+cpu, 120.2 s on CPU.
