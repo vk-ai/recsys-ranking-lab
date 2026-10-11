@@ -24,6 +24,12 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--reports", type=Path, default=Path("reports"))
     r.add_argument("--engine", choices=["spark", "pandas"], default="pandas")
     r.add_argument("--seed", type=int, default=0)
+    m = sub.add_parser("multiseed", help="run the pipeline under several model seeds; write reports/multiseed.json")
+    m.add_argument("--data", type=Path, default=data.DEFAULT_DATA_DIR)
+    m.add_argument("--out", type=Path, default=Path("artifacts"))
+    m.add_argument("--reports", type=Path, default=Path("reports"))
+    m.add_argument("--engine", choices=["spark", "pandas"], default="pandas")
+    m.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     a = p.parse_args(argv)
 
     if a.cmd == "download":
@@ -51,6 +57,10 @@ def main(argv: list[str] | None = None) -> None:
 
         cfg = PipelineConfig(seed=a.seed)
         run(a.data, a.out, a.reports, a.engine, cfg)
+    elif a.cmd == "multiseed":
+        from .multiseed import run_seeds
+
+        run_seeds(a.data, a.seeds, a.out, a.reports, a.engine)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ ratings ──► per-user temporal split ──► PySpark feature job (user/it
 
 MovieLens ml-latest-small: 90,816 train / 5,010 val / 5,010 test ratings, 501 evaluated users,
 9,742 items. Relevant = test-period rating ≥ 4 on an item that is (simulated) available. k = 10.
-CPU only, Python 3.12, torch 2.14.1+cpu, PySpark 4.2.0 in local mode, 50 s end to end.
+CPU only, Python 3.12, torch 2.14.1+cpu, PySpark 4.2.0 in local mode, 50 s end to end (120 s on the Oct 11 rerun, which shared the CPU with other jobs; same numbers).
 The pandas feature engine gives identical numbers. Full output: [`reports/REPORT.md`](reports/REPORT.md),
 [`reports/metrics.json`](reports/metrics.json).
 
@@ -58,8 +58,50 @@ The pandas feature engine gives identical numbers. Full output: [`reports/REPORT
 - **The ranker's offline lift is not significant.** Two-tower+ranker vs two-tower on per-user
   NDCG@10: +0.0040, paired t p = 0.36, permutation p = 0.37, 95% paired bootstrap CI [−0.0044, +0.0125].
   With 501 users, an effect this small can't be separated from noise.
-- Diversity trade-off: MMR raises ILD (0.723 → 0.784) and here also NDCG. Genre caps raise ILD
-  further (0.840) at a cost in recall.
+- Diversity trade-off: MMR raises ILD (0.723 → 0.784) and, in this seed, NDCG; across 5 seeds the NDCG
+  part is noise (see below). Genre caps raise ILD further (0.840) at a cost in recall.
+
+### Beyond accuracy: novelty, long tail and popularity bias (same run, seed 0)
+
+Long tail = every item outside the 82 most popular items, which together hold 20% of
+positive history ratings. Novelty = mean −log2(item popularity share), in bits.
+ARP = mean number of positive history ratings of the shown items. Gini is over how often
+each of the 9,742 items is shown (1 = all exposure on one item).
+
+| policy | novelty@10 (bits) | ARP@10 | APLT@10 | Gini@10 | coverage@10 |
+|---|---|---|---|---|---|
+| popularity | 1.92 | 166.2 | 0.008 | 0.998 | 0.010 |
+| two_tower | 3.56 | 73.4 | 0.584 | 0.965 | 0.085 |
+| two_tower+ranker | 3.11 | 93.8 | 0.439 | 0.981 | 0.059 |
+| two_tower+ranker+mmr | 3.09 | 94.0 | 0.437 | 0.981 | 0.059 |
+| two_tower+ranker+genre_cap | 3.06 | 96.0 | 0.429 | 0.982 | 0.060 |
+
+- **The re-ranker buys its small NDCG gain with popularity bias.** It pushes the long-tail
+  share of each list from 58% to 44%, makes the shown items about 28% more popular (ARP 73 → 94),
+  and shows 30% fewer distinct items (coverage 0.085 → 0.059).
+- MMR and genre caps raise *genre* diversity (ILD) but don't undo the popularity shift.
+  Genre diversity and long-tail exposure are different things.
+
+### Across 5 model seeds (`recsys-lab multiseed --engine spark --seeds 0 1 2 3 4`)
+
+Only the model seeds change (two-tower init and batch order, ranker init and holdout split).
+The data split, simulated availability and click model are fixed. Mean ± sample sd; full table
+in [`reports/MULTISEED.md`](reports/MULTISEED.md), raw numbers in [`reports/multiseed.json`](reports/multiseed.json).
+
+| policy | NDCG@10 | recall@10 | ILD@10 | coverage@10 | novelty@10 | APLT@10 |
+|---|---|---|---|---|---|---|
+| popularity | 0.0573 ± 0 | 0.0628 ± 0 | 0.779 ± 0 | 0.010 ± 0 | 1.92 ± 0 | 0.008 ± 0 |
+| two_tower | 0.0827 ± 0.0066 | 0.1015 ± 0.0079 | 0.769 ± 0.001 | 0.085 ± 0.002 | 3.54 ± 0.06 | 0.581 ± 0.014 |
+| two_tower+ranker | 0.0853 ± 0.0058 | 0.1021 ± 0.0071 | 0.723 ± 0.009 | 0.059 ± 0.003 | 3.13 ± 0.11 | 0.456 ± 0.036 |
+| two_tower+ranker+mmr | 0.0857 ± 0.0050 | 0.1026 ± 0.0053 | 0.781 ± 0.007 | 0.058 ± 0.003 | 3.10 ± 0.10 | 0.449 ± 0.031 |
+| two_tower+ranker+genre_cap | 0.0815 ± 0.0051 | 0.0955 ± 0.0061 | 0.841 ± 0.002 | 0.059 ± 0.004 | 3.06 ± 0.11 | 0.439 ± 0.034 |
+
+- The seed-to-seed spread in two-tower NDCG@10 (sd 0.0066) is **larger than the ranker's mean
+  gain** (+0.0026 ± 0.0041). The ranker wins in 4 of 5 seeds, but its paired test is significant
+  in only 1 of 5. Seed 0, the one reported above, has a gain of +0.0040, above the 5-seed average.
+- MMR's NDCG edge over the plain ranker (+0.0004 on average) is well inside the noise. The
+  single-seed claim "MMR also raises NDCG" doesn't hold up.
+- The popularity-bias result is stable: the ranker lowers APLT in every seed (two-tower 0.56-0.59 vs ranker 0.43-0.51).
 
 **Simulated A/B test** (click model, *not* real users): two_tower (control, n = 10,003) vs
 two_tower+ranker (treatment, n = 9,997), SRM p = 0.97.
@@ -92,6 +134,7 @@ pip install -e ".[dev,spark]"        # drop ",spark" to skip PySpark (needs Java
 pytest -q                            # offline, ~30 s; Spark tests skip without pyspark/Java
 recsys-lab download                  # MovieLens ml-latest-small, SHA-256 verified, into data/
 recsys-lab run --engine spark        # or --engine pandas; writes reports/ and artifacts/
+recsys-lab multiseed --engine spark  # 5 model seeds -> reports/multiseed.json, MULTISEED.md (~5-10 min)
 
 # the feature job on its own
 python -m recsys_lab.spark_job --train artifacts/splits/train.csv \
@@ -120,7 +163,7 @@ CI (GitHub Actions) has three jobs:
 | | The ranker is an MLP, not LightGBM/GBDT LambdaMART (kept dependency-free), and retrieval is brute-force dot product, not an ANN index (FAISS/ScaNN) |
 | | No feature store, model registry, serving API or online inference; everything is a batch script |
 | | Per-user leave-last-out split, not a global time cut, so some cross-user future information exists in training (standard MovieLens practice, but optimistic) |
-| | Single dataset, single seed; no hyper-parameter sweep or variance across seeds is reported |
+| | Single dataset; variance is over 5 *model* seeds only (the split, availability and click model are fixed), and there's no hyper-parameter sweep. Popularity for novelty/APLT/ARP is counted on this dataset's own history, so "long tail" means MovieLens-small's tail |
 
 ## Layout
 

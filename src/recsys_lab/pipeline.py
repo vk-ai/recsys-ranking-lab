@@ -251,6 +251,12 @@ def run(
     rel_avail = {int(u): {i for i in test_pos.get(int(u), set()) if available[i]} for u in eval_users}
     rel_all = {int(u): test_pos.get(int(u), set()) for u in eval_users}
     results = {name: metrics.evaluate(lists, rel_avail, k, item_genres, n_items) for name, lists in policies.items()}
+    n_hist_users = int(hist_test["userId"].nunique())
+    beyond = {}
+    for name, lists in policies.items():
+        ba = metrics.beyond_accuracy({u: lists[u] for u in lists if rel_avail.get(u)}, k, pop_counts, n_hist_users)
+        beyond[name] = ba
+        results[name].update({key: v for key, v in ba.items() if key != "short_head_items"})
     cand_lists = {int(u): cand_t[j].tolist() for j, u in enumerate(eval_users)}
     retrieval = {
         f"recall@{cfg.n_candidates}": metrics.evaluate(cand_lists, rel_all, cfg.n_candidates)[
@@ -327,6 +333,12 @@ def run(
         },
         "retrieval": retrieval,
         "offline": results,
+        "popularity_bias": {
+            "popularity": "positive ratings (>= 4) per item in train+val history",
+            "short_head_items": next(iter(beyond.values()))["short_head_items"],
+            "short_head_share_of_interactions": 0.2,
+            "history_users": n_hist_users,
+        },
         "availability": {
             "simulated": True,
             "available_rate": float(available.mean()),
@@ -368,6 +380,21 @@ def render_markdown(r: dict) -> str:
         lines.append(
             f"| {name} | {_f(m[f'recall@{k}'])} | {_f(m[f'ndcg@{k}'])} | {_f(m[f'map@{k}'])} | {_f(m[f'precision@{k}'])} | {_f(m[f'ild@{k}'])} | {_f(m[f'coverage@{k}'])} |"
         )
+    if f"novelty@{k}" in next(iter(r["offline"].values())):
+        pb = r.get("popularity_bias", {})
+        lines += [
+            "",
+            "## Beyond accuracy: novelty and popularity bias",
+            "",
+            f"Long tail = items outside the {pb.get('short_head_items', '?')} most popular items that hold 20% of positive history interactions.",
+            "",
+            f"| policy | novelty@{k} (bits) | ARP@{k} | APLT@{k} | Gini@{k} | coverage@{k} |",
+            "|---|---|---|---|---|---|",
+        ]
+        for name, m in r["offline"].items():
+            lines.append(
+                f"| {name} | {m[f'novelty@{k}']:.2f} | {m[f'arp@{k}']:.1f} | {_f(m[f'aplt@{k}'])} | {_f(m[f'gini@{k}'])} | {_f(m[f'coverage@{k}'])} |"
+            )
     ret = r["retrieval"]
     n = r["config"]["n_candidates"]
     s = r["offline_significance"]
